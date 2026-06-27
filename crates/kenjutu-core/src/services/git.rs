@@ -1,4 +1,7 @@
-use std::path::{Path, PathBuf};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 use git2::{
     AutotagOption, Commit, Cred, CredentialType, FetchOptions, RemoteCallbacks, Repository,
@@ -37,8 +40,72 @@ pub trait SshCredentialProvider {
 }
 
 pub fn open_repository(local_dir: &Path) -> Result<Repository> {
-    Repository::open(local_dir)
-        .map_err(|_| Error::RepoNotFound(local_dir.to_string_lossy().to_string()))
+    if let Ok(repo) = Repository::open(local_dir) {
+        return Ok(repo);
+    }
+
+    let Some(git_dir) = resolve_jj_git_dir(local_dir) else {
+        return Err(Error::RepoNotFound(local_dir.to_string_lossy().to_string()));
+    };
+
+    Repository::open(&git_dir).map_err(Error::Git2)
+}
+
+fn resolve_jj_git_dir(local_dir: &Path) -> Option<PathBuf> {
+    let jj_dir = find_jj_dir(local_dir)?;
+    let repo_dir = resolve_jj_repo_dir(&jj_dir)?;
+    let store_dir = repo_dir.join("store");
+
+    let store_type = fs::read_to_string(store_dir.join("type")).ok()?;
+    if store_type.trim() != "git" {
+        return None;
+    }
+
+    let git_target = fs::read_to_string(store_dir.join("git_target")).ok()?;
+    let git_target = Path::new(git_target.trim());
+    let git_dir = if git_target.is_absolute() {
+        git_target.to_path_buf()
+    } else {
+        store_dir.join(git_target)
+    };
+
+    fs::canonicalize(git_dir).ok()
+}
+
+fn find_jj_dir(local_dir: &Path) -> Option<PathBuf> {
+    let mut dir = if local_dir.is_file() {
+        local_dir.parent()?
+    } else {
+        local_dir
+    };
+
+    loop {
+        let candidate = dir.join(".jj");
+        if candidate.exists() {
+            return Some(candidate);
+        }
+        dir = dir.parent()?;
+    }
+}
+
+fn resolve_jj_repo_dir(jj_dir: &Path) -> Option<PathBuf> {
+    let repo = jj_dir.join("repo");
+    if repo.is_dir() {
+        return Some(repo);
+    }
+
+    if repo.is_file() {
+        let target = fs::read_to_string(&repo).ok()?;
+        let target = Path::new(target.trim());
+        let path = if target.is_absolute() {
+            target.to_path_buf()
+        } else {
+            jj_dir.join(target)
+        };
+        return fs::canonicalize(path).ok();
+    }
+
+    None
 }
 
 /// Falls back to "origin" if no remotes match
@@ -205,6 +272,35 @@ pub fn get_commits_in_range(
 mod tests {
     use super::*;
     use test_repo::TestRepo;
+
+    fn secondary_workspace_for(repo: &TestRepo) -> PathBuf {
+        let workspace = repo.path().with_file_name(format!(
+            "{}-workspace",
+            repo.path().file_name().unwrap().to_string_lossy()
+        ));
+        let _ = fs::remove_dir_all(&workspace);
+        fs::create_dir_all(workspace.join(".jj")).unwrap();
+        fs::write(
+            workspace.join(".jj/repo"),
+            repo.path().join(".jj/repo").to_string_lossy().as_ref(),
+        )
+        .unwrap();
+        workspace
+    }
+
+    #[test]
+    fn open_repository_follows_jj_workspace_repo_link() {
+        let repo = TestRepo::new().unwrap();
+        let workspace = secondary_workspace_for(&repo);
+
+        let opened = open_repository(&workspace).unwrap();
+
+        assert_eq!(
+            fs::canonicalize(opened.path()).unwrap(),
+            fs::canonicalize(repo.repo.path()).unwrap()
+        );
+        fs::remove_dir_all(workspace).unwrap();
+    }
 
     #[test]
     fn get_commits_in_range_single_commit() {

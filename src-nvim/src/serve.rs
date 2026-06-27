@@ -43,9 +43,13 @@ impl Response {
     }
 }
 
-pub fn run(local_dir: &Path) -> Result<()> {
-    let repo = git2::Repository::open(local_dir)
-        .with_context(|| format!("failed to open git repository at {}", local_dir.display()))?;
+pub fn run(workspace_dir: &Path) -> Result<()> {
+    let repo = kenjutu_core::services::git::open_repository(workspace_dir).with_context(|| {
+        format!(
+            "failed to open git repository for {}",
+            workspace_dir.display()
+        )
+    })?;
 
     let stdin = io::stdin().lock();
     let mut stdout = io::stdout().lock();
@@ -65,7 +69,7 @@ pub fn run(local_dir: &Path) -> Result<()> {
             }
         };
 
-        let resp = dispatch(&repo, &req);
+        let resp = dispatch(workspace_dir, &repo, &req);
         write_response(&mut stdout, &resp)?;
     }
 
@@ -79,9 +83,9 @@ fn write_response(out: &mut impl Write, resp: &Response) -> Result<()> {
     Ok(())
 }
 
-fn dispatch(repo: &git2::Repository, req: &Request) -> Response {
+fn dispatch(workspace_dir: &Path, repo: &git2::Repository, req: &Request) -> Response {
     match req.method.as_str() {
-        "files" => handle_files(req.id, repo, &req.params),
+        "files" => handle_files(req.id, workspace_dir, repo, &req.params),
         "blob" => handle_blob(req.id, repo, &req.params),
         "mark-file" => handle_mark(req.id, repo, &req.params),
         "unmark-file" => handle_unmark(req.id, repo, &req.params),
@@ -103,14 +107,19 @@ struct FilesParams {
     find_latest_commit: bool,
 }
 
-fn handle_files(id: u64, repo: &git2::Repository, params: &serde_json::Value) -> Response {
+fn handle_files(
+    id: u64,
+    workspace_dir: &Path,
+    repo: &git2::Repository,
+    params: &serde_json::Value,
+) -> Response {
     let params: FilesParams = match serde_json::from_value(params.clone()) {
         Ok(p) => p,
         Err(e) => return Response::err(id, format!("invalid params: {e}")),
     };
 
     let commit_id = if params.find_latest_commit {
-        match find_latest_commit(repo, params.commit_id) {
+        match find_latest_commit(workspace_dir, repo, params.commit_id) {
             Ok(new_commit) => new_commit,
             Err(e) => return Response::err(id, format!("failed to get latest commit: {e}")),
         }
@@ -493,16 +502,16 @@ fn handle_unresolve_comment(
     Response::ok(id, serde_json::json!({ "success": true }))
 }
 
-fn find_latest_commit(repo: &git2::Repository, commit_id: CommitId) -> Result<CommitId> {
+fn find_latest_commit(
+    workspace_dir: &Path,
+    repo: &git2::Repository,
+    commit_id: CommitId,
+) -> Result<CommitId> {
     let commit = repo
         .find_commit(commit_id.oid())
         .context("failed to get commit")?;
     let change_id = commit.change_id();
-    let dir = repo
-        .path()
-        .parent()
-        .ok_or_else(|| anyhow::anyhow!("parent of .git dir doesn't exist"))?;
-    let new_commit = find_commit_from_change_id(dir, change_id)?;
+    let new_commit = find_commit_from_change_id(workspace_dir, change_id)?;
     Ok(new_commit)
 }
 

@@ -18,8 +18,12 @@ pub fn run(local_dir: &Path, revset: Option<String>, all: bool) -> Result<()> {
     let revset_entries = resolve::resolve_revset(local_dir, revset.as_deref())
         .context("failed to resolve revset")?;
 
-    let repo = git2::Repository::open(local_dir)
-        .with_context(|| format!("failed to open git repository at {}", local_dir.display()))?;
+    let repo = kenjutu_core::services::git::open_repository(local_dir).with_context(|| {
+        format!(
+            "failed to open git repository for {}",
+            local_dir.display()
+        )
+    })?;
 
     let mut entries: Vec<StatusEntry> = Vec::new();
 

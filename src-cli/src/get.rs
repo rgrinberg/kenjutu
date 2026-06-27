@@ -85,8 +85,8 @@ pub fn run(
     let commit_sha = resolve::resolve_commit_sha(local_dir, change_id)
         .context("failed to resolve change_id to commit SHA")?;
 
-    let repo = git2::Repository::open(local_dir)
-        .with_context(|| format!("failed to open git repository at {}", dir))?;
+    let repo = kenjutu_core::services::git::open_repository(local_dir)
+        .with_context(|| format!("failed to open git repository for {}", dir))?;
 
     let all_ported = get_all_ported_comments(&repo, commit_sha)
         .map_err(|e| anyhow::anyhow!("failed to read comments: {e}"))?;
