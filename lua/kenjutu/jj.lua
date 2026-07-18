@@ -344,7 +344,7 @@ local METADATA_TEMPLATE = table.concat({
 ---@param callback fun(err: string|nil, metadata: kenjutu.CommitMetadata|nil)
 function M.fetch_commit_metadata(dir, change_id, callback)
   vim.system(
-    { "jj", "log", "-r", change_id, "--no-graph", "--no-pager", "-T", METADATA_TEMPLATE },
+    { "jj", "log", "--ignore-working-copy", "-r", change_id, "--no-graph", "--no-pager", "-T", METADATA_TEMPLATE },
     { cwd = dir, text = true },
     vim.schedule_wrap(function(obj)
       if obj.code ~= 0 then
