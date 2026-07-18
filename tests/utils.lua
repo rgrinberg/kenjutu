@@ -16,6 +16,7 @@ local original_kjn_unresolve_comment = kjn.unresolve_comment
 
 local original_jj_log = jj.log
 local original_jj_fetch_metadata = jj.fetch_commit_metadata
+local original_jj_fetch_commits_metadata = jj.fetch_commits_metadata
 local original_jj_describe = jj.describe
 local original_jj_new_commit = jj.new_commit
 local original_jj_squash = jj.squash
@@ -59,6 +60,27 @@ function M.mock_all()
   jj.fetch_commit_metadata = function(_, _, callback)
     callback(nil, { summary = "", description = "", author = "", timestamp = "" })
   end
+  jj.fetch_commits_metadata = function(dir, change_ids, callback)
+    local metadata_by_change_id = {}
+    local pending = #change_ids
+    if pending == 0 then
+      callback(nil, metadata_by_change_id)
+      return
+    end
+    for _, change_id in ipairs(change_ids) do
+      jj.fetch_commit_metadata(dir, change_id, function(err, metadata)
+        if err then
+          callback(err, nil)
+          return
+        end
+        metadata_by_change_id[change_id] = metadata
+        pending = pending - 1
+        if pending == 0 then
+          callback(nil, metadata_by_change_id)
+        end
+      end)
+    end
+  end
   jj.describe = function(_, _, _, callback)
     callback(nil)
   end
@@ -87,6 +109,7 @@ function M.restore_all()
 
   jj.log = original_jj_log
   jj.fetch_commit_metadata = original_jj_fetch_metadata
+  jj.fetch_commits_metadata = original_jj_fetch_commits_metadata
   jj.describe = original_jj_describe
   jj.new_commit = original_jj_new_commit
   jj.squash = original_jj_squash

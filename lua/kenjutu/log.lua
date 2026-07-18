@@ -242,21 +242,16 @@ function LogScreenState:execute_squash()
   local source_change_id = source.change_id
   local dest_change_id = dest.change_id
 
-  utils.await_all({
-    source = function(cb)
-      jj.fetch_commit_metadata(self.dir, source_change_id, cb)
-    end,
-    dest = function(cb)
-      jj.fetch_commit_metadata(self.dir, dest_change_id, cb)
-    end,
-  }, function(err, results)
-    if err or not results then
+  jj.fetch_commits_metadata(self.dir, { source_change_id, dest_change_id }, function(err, metadata_by_change_id)
+    local source_metadata = metadata_by_change_id and metadata_by_change_id[source_change_id]
+    local dest_metadata = metadata_by_change_id and metadata_by_change_id[dest_change_id]
+    if err or not source_metadata or not dest_metadata then
       vim.notify("jj squash: failed to fetch commit metadata", vim.log.levels.ERROR)
       return
     end
 
-    local source_desc = full_description(results.source)
-    local dest_desc = full_description(results.dest)
+    local source_desc = full_description(source_metadata)
+    local dest_desc = full_description(dest_metadata)
     local message = resolve_squash_message(source_desc, dest_desc)
 
     if message ~= nil or (source_desc == "" and dest_desc == "") then

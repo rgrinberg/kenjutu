@@ -332,43 +332,70 @@ end
 ---@field timestamp string
 
 local METADATA_TEMPLATE = table.concat({
-  "self.description()",
+  "change_id",
+  '++ "\\x00"',
+  "++ self.description()",
   '++ "\\x00"',
   "++ author.name()",
   '++ "\\x00"',
   "++ author.timestamp().ago()",
+  '++ "\\x00"',
 }, " ")
 
 ---@param dir string
----@param change_id string
----@param callback fun(err: string|nil, metadata: kenjutu.CommitMetadata|nil)
-function M.fetch_commit_metadata(dir, change_id, callback)
+---@param change_ids string[]
+---@param callback fun(err: string|nil, metadata_by_change_id: table<string, kenjutu.CommitMetadata>|nil)
+function M.fetch_commits_metadata(dir, change_ids, callback)
+  if #change_ids == 0 then
+    callback(nil, {})
+    return
+  end
+
+  local cmd = { "jj", "log", "--ignore-working-copy", "--no-graph", "--no-pager", "-T", METADATA_TEMPLATE }
+  for _, change_id in ipairs(change_ids) do
+    table.insert(cmd, "-r")
+    table.insert(cmd, change_id)
+  end
+
   vim.system(
-    { "jj", "log", "--ignore-working-copy", "-r", change_id, "--no-graph", "--no-pager", "-T", METADATA_TEMPLATE },
+    cmd,
     { cwd = dir, text = true },
     vim.schedule_wrap(function(obj)
       if obj.code ~= 0 then
         callback("jj log metadata failed", nil)
         return
       end
-      local stdout = vim.trim(obj.stdout or "")
-      local fields = vim.split(stdout, "\0", { plain = true })
-      local full_desc = vim.trim(fields[1] or "")
-      local desc_lines = vim.split(full_desc, "\n", { plain = true })
-      local summary = desc_lines[1] or ""
-      local body_lines = {}
-      for i = 2, #desc_lines do
-        table.insert(body_lines, desc_lines[i])
+
+      local fields = vim.split(obj.stdout or "", "\0", { plain = true })
+      local metadata_by_change_id = {}
+      for field_index = 1, #fields - 3, 4 do
+        local change_id = fields[field_index]
+        local full_desc = vim.trim(fields[field_index + 1] or "")
+        local desc_lines = vim.split(full_desc, "\n", { plain = true })
+        local body_lines = {}
+        for line_index = 2, #desc_lines do
+          table.insert(body_lines, desc_lines[line_index])
+        end
+        metadata_by_change_id[change_id] = {
+          summary = desc_lines[1] or "",
+          description = vim.trim(table.concat(body_lines, "\n")),
+          author = fields[field_index + 2] or "",
+          timestamp = fields[field_index + 3] or "",
+        }
       end
-      local description = vim.trim(table.concat(body_lines, "\n"))
-      callback(nil, {
-        summary = summary,
-        description = description,
-        author = fields[2] or "",
-        timestamp = fields[3] or "",
-      })
+      callback(nil, metadata_by_change_id)
     end)
   )
+end
+
+---@param dir string
+---@param change_id string
+---@param callback fun(err: string|nil, metadata: kenjutu.CommitMetadata|nil)
+function M.fetch_commit_metadata(dir, change_id, callback)
+  M.fetch_commits_metadata(dir, { change_id }, function(err, metadata_by_change_id)
+    local _, metadata = next(metadata_by_change_id or {})
+    callback(err, metadata)
+  end)
 end
 
 ---@param dir string
